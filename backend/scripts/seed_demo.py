@@ -8,12 +8,15 @@ from src.settlement_models import Settlement
 from src.repair_models import RepairBay,RepairAppointment
 from src.spare_models import SpareStock,PartIssue
 from src.followup_models import RepairFollowup
+from src.blind_models import BlindReviewConfig,BlindReview,BlindBallot
 
 def seed():
     Base.metadata.create_all(engine)
     with Session.begin() as s:
         for role in ['admin','assessor','viewer']:
             if not s.scalar(select(User).where(User.email==f'{role}@gengchuan.local')):s.add(User(email=f'{role}@gengchuan.local',password=password_hash('Field2026!'),role=role))
+        if not s.scalar(select(User).where(User.email=='assessor2@gengchuan.local')):s.add(User(email='assessor2@gengchuan.local',password=password_hash('Field2026!'),role='assessor'))
+        if not s.scalar(select(BlindReviewConfig)):s.add(BlindReviewConfig(low=.4,high=.6,updated_by='seed',updated_at='2026-11-19T00:00:00+00:00'))
         for serial,model,hours in [('GC-2408','Paddy-90',860),('GC-2412','Dryland-120',1120),('GC-EXPIRED','Paddy-90',2450)]:
             if not s.scalar(select(Machine).where(Machine.serial==serial)):s.add(Machine(serial=serial,model=model,purchase_date='2025-04-12',warranty_hours=2000,hours=hours))
         s.flush(); machines=s.scalars(select(Machine).order_by(Machine.id)).all()
@@ -38,10 +41,16 @@ def seed():
         if not s.scalar(select(PartReturn).where(PartReturn.claim_id==c.id)):
             s.add(PartReturn(claim_id=c.id,tracking_code='RT-DEMO-SETTLE',expected_serial=m.serial,received_serial=m.serial,condition='油封拆件封袋完好，序列与原始索赔匹配',state='verified',verified_by='admin@gengchuan.local'))
     with Session.begin() as s:
+        m=s.scalar(select(Machine).where(Machine.serial=='GC-2412'))
+        c=s.scalar(select(Claim).where(Claim.code=='CL-BLIND-DEMO'))
+        if not c:
+            c=Claim(code='CL-BLIND-DEMO',machine_id=m.id,part='engine',hours_at_failure=1250,age_days=520,leak_flag=True,risk=.52,status='assessed',historical=False,assessment_note='模拟分流完成，争议概率贴近分流线，进入盲审');s.add(c);s.flush()
+            s.add(BlindReview(claim_id=c.id,risk=.52,low=.4,high=.6,state='collecting',created_at='2026-11-19T08:30:00+00:00'))
+    with Session.begin() as s:
         for code,cap,active in [('BAY-HYD',8,True),('BAY-QUICK',4,True),('BAY-OFF',8,False)]:
             if not s.scalar(select(RepairBay).where(RepairBay.code==code)):s.add(RepairBay(code=code,daily_hours=cap,active=active))
         for code,part,qty in [('SP-HYD-01','hydraulic',20),('SP-ENG-01','engine',5),('SP-TRANS-01','transmission',3)]:
             if not s.scalar(select(SpareStock).where(SpareStock.code==code)):s.add(SpareStock(code=code,part=part,available_qty=qty))
     with Session() as s:
-        print(json.dumps({k:s.scalar(select(func.count()).select_from(v)) for k,v in [('users',User),('machines',Machine),('claims',Claim),('inspections',Inspection),('part_returns',PartReturn),('settlements',Settlement),('repair_bays',RepairBay),('repair_appointments',RepairAppointment),('spare_stocks',SpareStock),('part_issues',PartIssue),('repair_followups',RepairFollowup)]}))
+        print(json.dumps({k:s.scalar(select(func.count()).select_from(v)) for k,v in [('users',User),('machines',Machine),('claims',Claim),('inspections',Inspection),('part_returns',PartReturn),('settlements',Settlement),('repair_bays',RepairBay),('repair_appointments',RepairAppointment),('spare_stocks',SpareStock),('part_issues',PartIssue),('repair_followups',RepairFollowup),('blind_review_config',BlindReviewConfig),('blind_reviews',BlindReview),('blind_ballots',BlindBallot)]}))
 if __name__=='__main__':seed()

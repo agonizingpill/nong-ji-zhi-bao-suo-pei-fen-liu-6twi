@@ -2,6 +2,7 @@ from datetime import datetime,timezone
 from fastapi import HTTPException
 from sqlalchemy import select
 from .models import Machine,Claim,Inspection,Audit
+from .blind_models import BlindReview
 
 def obj(x):return {c.name:getattr(x,c.name) for c in x.__table__.columns}
 def get(s,model,id):
@@ -27,6 +28,8 @@ def inspect(s,c,data,u):
 def adjudicate(s,c,decision,u):
     if c.status=='out_of_warranty':raise HTTPException(409,'机具故障工时已过保，不允许质保赔付')
     if c.status!='assessed':raise HTTPException(409,'索赔须完成风险分流，且不可重复裁决')
+    br=s.scalar(select(BlindReview).where(BlindReview.claim_id==c.id))
+    if br and br.state!='signed':raise HTTPException(409,'争议概率落入盲审区间，须完成盲审交卷、揭盲后签署')
     i=s.scalar(select(Inspection).where(Inspection.claim_id==c.id))
     if not i:raise HTTPException(409,'必须先记录拆检意见')
     if decision=='paid' and c.risk is not None and c.risk>=.5 and not i.evidence_complete:raise HTTPException(409,'高争议风险索赔必须补齐拆检证据后才能赔付')

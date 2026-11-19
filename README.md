@@ -20,8 +20,9 @@ docker compose exec -T backend python -m scripts.seed_demo
 
 |角色|账号|口令|主要权限|
 |---|---|---|---|
-|admin 质保主管|admin@gengchuan.local|Field2026!|台账编辑、受理、拆检、最终赔付/拒赔、旧件核验、结算核定和记账|
-|assessor 拆检评估员|assessor@gengchuan.local|Field2026!|新机登记、索赔、分流、拆检、旧件发件/收货、结算草稿；不可签署|
+|admin 质保主管|admin@gengchuan.local|Field2026!|台账编辑、受理、拆检、最终赔付/拒赔、旧件核验、结算核定和记账、盲审区间设置与分歧裁决|
+|assessor 拆检评估员|assessor@gengchuan.local|Field2026!|新机登记、索赔、分流、拆检、旧件发件/收货、结算草稿、盲审交卷；不可签署|
+|assessor 拆检评估员②|assessor2@gengchuan.local|Field2026!|同上，用于双评盲审的第二票|
 |viewer 经销商观察员|viewer@gengchuan.local|Field2026!|只读九页及审计|
 
 ## 业务与页面
@@ -94,6 +95,22 @@ Seed 另有 `CL-RETURN-DEMO`（已赔付、可发件）和 `CL-SETTLE-DEMO`（�
 seed新增BAY-HYD(8h/日)、BAY-QUICK(4h/日)、BAY-OFF停用，以及hydraulic20/engine5/transmission3件备件。可用CL-RETURN-DEMO或CL-SETTLE-DEMO已赔付索赔演练预约→匹配领料→开工→完工→质量回访；异常再安排同索赔新预约返工后主管关闭。自然键只补缺失，重复seed不改已扣库存、维修实耗、工位容量、回访与原结算。新增5张表，不给原历史表加列，也不回填改变旧签结。
 
 当前范围：预约为按日工时额度，无具体起止时刻、跨工位调度或取消；完工超时只留主管依据，不重分配其他预约。工位停用只阻止新预约，已确认维修仍可履约；无工资、采购补货、拆单部分退料、仓库扫码或真实售后联系。回访是人工登记，不外发消息；异常关闭证明同索赔返工完工，不替代另一轮质量验收或重开原赔款。新增证据见 `test-artifacts/gb-1022/v3/`。
+
+## 盲审双评签署（第四轮扩展）
+
+10. 盲审区间：主管在索赔受理页设定争议概率盲审区间（默认 40%–60%）。worker 完成分流计算时若概率落入当前区间，即为该索赔立案盲审，并把区间与概率快照存入 BlindReview；之后调整区间只影响新受理的分流，已立案索赔按原快照执行。
+11. 背对背交卷：立案后由两名评估员（admin/assessor 均可参评）各自提交结论（赔付/拒赔）、自估争议概率与意见说明。BlindBallot 按 （盲审单， 评估员） 唯一约束记票，同一评估员重复提交相同内容幂等返回、不重复记票，内容不同则拒绝修改；交卷与揭盲都对盲审单行加锁，并发交卷不会提前揭盲——交齐前任何接口都不返回对方意见和概率。
+12. 揭盲签署：两票交齐后在索赔受理页揭盲，双方结论与概率公开。意见一致时主管须按该结论签署；意见分歧时须由未参评主管写明至少 8 字裁决理由后裁决。签署复用既有裁决规则：签赔仍查拆检证据（概率 ≥50% 须证据完整），同步更新 Claim.status 与 Inspection.decision，结案不可再改。盲审中的索赔不能在拆检裁决页直接签署。
+
+|接口|权限/动作|
+|---|---|
+|GET /blind-review-config、GET /blind-reviews|三角色读取；未揭盲时选票意见与概率不返回|
+|PUT /blind-review-config|admin 调整盲审区间，仅影响之后受理的分流|
+|POST /blind-reviews/{id}/ballots|admin/assessor 交卷；幂等重试不重复记票|
+|POST /blind-reviews/{id}/reveal|admin/assessor 两票交齐后揭盲|
+|POST /blind-reviews/{id}/sign|admin 签署；分歧时仅未参评主管且须写明理由|
+
+新增 `blind_models.py`（区间配置、盲审单、选票三表）、`blind_service.py`（区间快照、记票幂等、揭盲与签署规则）、`blind_schemas.py` 与 `blind_routes.py`；worker 分流写回时按当时区间立案；`claim_service.adjudicate` 拒绝绕过盲审的直接签署。前端索赔受理页新增盲审区间设置与盲审签署台（交卷、揭盲、签署），拆检裁决页对盲审中索赔禁用直接签署并指引回索赔页。seed 新增 assessor2 账号、默认区间配置与 `CL-BLIND-DEMO`（概率 0.52 待盲评），自然键只补缺失，不改已有数据。
 
 ## 已知范围
 
